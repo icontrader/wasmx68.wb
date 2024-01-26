@@ -12,6 +12,57 @@
 #include <stdlib.h>
 #include <string.h>
 
+struct ConvertContext
+{
+    // Type Section
+    struct FuncType *types;
+    uint32_t max_param_len;
+
+    // Import Section
+    struct Import {
+        const char *mod;
+        const char *name;
+        uint32_t type_idx;
+    } *imports;
+    uint32_t imports_len;
+
+    // Func Section
+    struct Func {
+        uint32_t type_idx;
+    } *funcs;
+
+    // Table Section
+    struct Table {
+        int8_t type;
+        struct Limits limits;
+    } *tables;
+
+    // Mem Section
+    struct Mem {
+        struct Limits limits;
+    } *mems;
+    uint32_t mems_len;
+
+    // Global Section
+    struct Global {
+        bool mut;
+        int8_t val_type;
+    } *globals;
+};
+
+
+
+void convert_TypeSection(struct ConvertContext *ctx, struct InputStream *in, FILE *out);
+void convert_ImportSection(struct ConvertContext *ctx, struct InputStream *in, FILE *out);
+void convert_FuncSection(struct ConvertContext *ctx, struct InputStream *in, FILE *out);
+void convert_TableSection(struct ConvertContext *ctx, struct InputStream *in, FILE *out);
+void convert_MemSection(struct ConvertContext *ctx, struct InputStream *in, FILE *out);
+void convert_GlobalSection(struct ConvertContext *ctx, struct InputStream *in, FILE *out);
+void convert_ExportSection(struct ConvertContext *ctx, struct InputStream *in, FILE *out);
+void convert_ElemSection(struct ConvertContext *ctx, struct InputStream *in, FILE *out);
+void convert_CodeSection(struct ConvertContext *ctx, struct InputStream *in, FILE *out);
+void convert_DataSection(struct ConvertContext *ctx, struct InputStream *in, FILE *out);
+
 struct FuncType {
     const struct ResultType *param;
     const struct ResultType *result;
@@ -73,13 +124,15 @@ static void renderExpr(FILE *out, struct InputStream *in) {
     }
 }
 
+const char *mod = "wasm";
+
 int main(int argc, char **argv) {
     if (argc != 3) {
         fprintf(stderr, "usage: %s in.wasm.zst out.c\n", argv[0]);
         return 1;
     }
 
-    const char *mod = "wasm";
+    // const char *mod = "wasm";
     bool is_big_endian = false; // TODO
 
     struct InputStream in;
@@ -287,44 +340,111 @@ int main(int argc, char **argv) {
           "}\n"
           "\n", out);
 
-    struct FuncType *types;
-    uint32_t max_param_len = 0;
-    (void)InputStream_skipToSection(&in, WasmSectionId_type);
+    bool emitElem = false;
+    struct ConvertContext ctx;
+    struct SectionHeader section_header;
+    while (InputStream_readSectionHeader(&in, &section_header))
     {
-        uint32_t len = InputStream_readLeb128_u32(&in);
-        types = malloc(sizeof(struct FuncType) * len);
-        if (types == NULL) panic("out of memory");
-        for (uint32_t i = 0; i < len; i += 1) {
-            if (InputStream_readByte(&in) != 0x60) panic("expected functype");
-            types[i].param = InputStream_readResultType(&in);
-            if (types[i].param->len > max_param_len) max_param_len = types[i].param->len;
-            types[i].result = InputStream_readResultType(&in);
+        switch (section_header.id)
+        {
+        case WasmSectionId_type:
+            convert_TypeSection(&ctx, &in, out);
+            break;
+        
+        case WasmSectionId_import:
+            convert_ImportSection(&ctx, &in, out);
+            break;
+        
+        case WasmSectionId_func:
+            convert_FuncSection(&ctx, &in, out);
+            break;
+        
+        case WasmSectionId_table:
+            convert_TableSection(&ctx, &in, out);
+            break;
+        
+        case WasmSectionId_mem:
+            convert_MemSection(&ctx, &in, out);
+            break;
+        
+        case WasmSectionId_global:
+            convert_GlobalSection(&ctx, &in, out);
+            break;
+        
+        case WasmSectionId_export:
+            convert_ExportSection(&ctx, &in, out);
+            break;
+        
+        case WasmSectionId_elem:
+            emitElem = true;
+            convert_ElemSection(&ctx, &in, out);
+            break;
+        
+        case WasmSectionId_code:
+            convert_CodeSection(&ctx, &in, out);
+            break;
+        
+        case WasmSectionId_data:
+            convert_DataSection(&ctx, &in, out);
+            break;
+        
+        default:
+            InputStream_skipBytes(&in, section_header.size); // SkipSection
+            break;
         }
+        
+    }
+    if (!emitElem) {
+        fputs(
+            "static void init_elem() {}\n",
+            out
+        );
     }
 
-    struct Import {
-        const char *mod;
-        const char *name;
-        uint32_t type_idx;
-    } *imports;
-    (void)InputStream_skipToSection(&in, WasmSectionId_import);
-    uint32_t imports_len = InputStream_readLeb128_u32(&in);
+    InputStream_close(&in);
+    fclose(out);
+}
+void convert_TypeSection(struct ConvertContext *ctx, struct InputStream *in, FILE *out) {
+    // struct FuncType *types;
+    // uint32_t max_param_len = 0;
+    ctx->max_param_len = 0;
+    // (void)InputStream_skipToSection(in, WasmSectionId_type);
     {
-        imports = malloc(sizeof(struct Import) * imports_len);
-        if (imports == NULL) panic("out of memory");
-        for (uint32_t i = 0; i < imports_len; i += 1) {
-            imports[i].mod = InputStream_readName(&in);
-            imports[i].name = InputStream_readName(&in);
-            switch (InputStream_readByte(&in)) {
+        uint32_t len = InputStream_readLeb128_u32(in);
+        ctx->types = malloc(sizeof(struct FuncType) * len);
+        if (ctx->types == NULL) panic("out of memory");
+        for (uint32_t i = 0; i < len; i += 1) {
+            if (InputStream_readByte(in) != 0x60) panic("expected functype");
+            ctx->types[i].param = InputStream_readResultType(in);
+            if (ctx->types[i].param->len > ctx->max_param_len) ctx->max_param_len = ctx->types[i].param->len;
+            ctx->types[i].result = InputStream_readResultType(in);
+        }
+    }
+}
+void convert_ImportSection(struct ConvertContext *ctx, struct InputStream *in, FILE *out) {
+    // struct Import {
+    //     const char *mod;
+    //     const char *name;
+    //     uint32_t type_idx;
+    // } *imports;
+    // (void)InputStream_skipToSection(in, WasmSectionId_import);
+    ctx->imports_len = InputStream_readLeb128_u32(in);
+    {
+        ctx->imports = malloc(sizeof(struct Import) * ctx->imports_len);
+        if (ctx->imports == NULL) panic("out of memory");
+        for (uint32_t i = 0; i < ctx->imports_len; i += 1) {
+            ctx->imports[i].mod = InputStream_readName(in);
+            ctx->imports[i].name = InputStream_readName(in);
+            switch (InputStream_readByte(in)) {
                 case 0x00: { // func
-                    imports[i].type_idx = InputStream_readLeb128_u32(&in);
-                    const struct FuncType *func_type = &types[imports[i].type_idx];
+                    ctx->imports[i].type_idx = InputStream_readLeb128_u32(in);
+                    const struct FuncType *func_type = &ctx->types[ctx->imports[i].type_idx];
                     switch (func_type->result->len) {
                         case 0: fputs("void", out); break;
                         case 1: fputs(WasmValType_toC(func_type->result->types[0]), out); break;
                         default: panic("multiple function returns not supported");
                     }
-                    fprintf(out, " %s_%s(", imports[i].mod, imports[i].name);
+                    fprintf(out, " %s_%s(", ctx->imports[i].mod, ctx->imports[i].name);
                     if (func_type->param->len == 0) fputs("void", out);
                     for (uint32_t param_i = 0; param_i < func_type->param->len; param_i += 1) {
                         if (param_i > 0) fputs(", ", out);
@@ -344,17 +464,19 @@ int main(int argc, char **argv) {
         fputc('\n', out);
     }
 
-    struct Func {
-        uint32_t type_idx;
-    } *funcs;
-    (void)InputStream_skipToSection(&in, WasmSectionId_func);
+}
+void convert_FuncSection(struct ConvertContext *ctx, struct InputStream *in, FILE *out) {
+    // struct Func {
+    //     uint32_t type_idx;
+    // } *funcs;
+    // (void)InputStream_skipToSection(in, WasmSectionId_func);
     {
-        uint32_t len = InputStream_readLeb128_u32(&in);
-        funcs = malloc(sizeof(struct Func) * len);
-        if (funcs == NULL) panic("out of memory");
+        uint32_t len = InputStream_readLeb128_u32(in);
+        ctx->funcs = malloc(sizeof(struct Func) * len);
+        if (ctx->funcs == NULL) panic("out of memory");
         for (uint32_t i = 0; i < len; i += 1) {
-            funcs[i].type_idx = InputStream_readLeb128_u32(&in);
-            const struct FuncType *func_type = &types[funcs[i].type_idx];
+            ctx->funcs[i].type_idx = InputStream_readLeb128_u32(in);
+            const struct FuncType *func_type = &ctx->types[ctx->funcs[i].type_idx];
             fputs("static ", out);
             switch (func_type->result->len) {
                 case 0: fputs("void", out); break;
@@ -371,43 +493,46 @@ int main(int argc, char **argv) {
         }
         fputc('\n', out);
     }
-
-    struct Table {
-        int8_t type;
-        struct Limits limits;
-    } *tables;
-    (void)InputStream_skipToSection(&in, WasmSectionId_table);
+}
+void convert_TableSection(struct ConvertContext *ctx, struct InputStream *in, FILE *out) {
+    // struct Table {
+    //     int8_t type;
+    //     struct Limits limits;
+    // } *tables;
+    // (void)InputStream_skipToSection(in, WasmSectionId_table);
     {
-        uint32_t len = InputStream_readLeb128_u32(&in);
-        tables = malloc(sizeof(struct Table) * len);
-        if (tables == NULL) panic("out of memory");
+        uint32_t len = InputStream_readLeb128_u32(in);
+        ctx->tables = malloc(sizeof(struct Table) * len);
+        if (ctx->tables == NULL) panic("out of memory");
         for (uint32_t i = 0; i < len; i += 1) {
-            int64_t ref_type = InputStream_readLeb128_i64(&in);
+            int64_t ref_type = InputStream_readLeb128_i64(in);
             switch (ref_type) {
                 case WasmValType_funcref:
                     break;
 
                 default: panic("unsupported reftype");
             }
-            tables[i].type = ref_type;
-            tables[i].limits = InputStream_readLimits(&in);
-            if (tables[i].limits.min != tables[i].limits.max) panic("growable table not supported");
+            ctx->tables[i].type = ref_type;
+            ctx->tables[i].limits = InputStream_readLimits(in);
+            if (ctx->tables[i].limits.min != ctx->tables[i].limits.max) panic("growable table not supported");
             fprintf(out, "static void (*t%" PRIu32 "[UINT32_C(%" PRIu32 ")])(void);\n",
-                    i, tables[i].limits.min);
+                    i, ctx->tables[i].limits.min);
         }
         fputc('\n', out);
     }
 
-    struct Mem {
-        struct Limits limits;
-    } *mems;
-    (void)InputStream_skipToSection(&in, WasmSectionId_mem);
-    uint32_t mems_len = InputStream_readLeb128_u32(&in);
+}
+void convert_MemSection(struct ConvertContext *ctx, struct InputStream *in, FILE *out) {
+    // struct Mem {
+    //     struct Limits limits;
+    // } *mems;
+    // (void)InputStream_skipToSection(in, WasmSectionId_mem);
+    ctx->mems_len = InputStream_readLeb128_u32(in);
     {
-        mems = malloc(sizeof(struct Mem) * mems_len);
-        if (mems == NULL) panic("out of memory");
-        for (uint32_t i = 0; i < mems_len; i += 1) {
-            mems[i].limits = InputStream_readLimits(&in);
+        ctx->mems = malloc(sizeof(struct Mem) * ctx->mems_len);
+        if (ctx->mems == NULL) panic("out of memory");
+        for (uint32_t i = 0; i < ctx->mems_len; i += 1) {
+            ctx->mems[i].limits = InputStream_readLimits(in);
             fprintf(out, "static uint8_t *m%" PRIu32 ";\n"
                     "static uint32_t p%" PRIu32 ";\n"
                     "static uint32_t c%" PRIu32 ";\n", i, i, i);
@@ -415,38 +540,42 @@ int main(int argc, char **argv) {
         fputc('\n', out);
     }
 
-    struct Global {
-        bool mut;
-        int8_t val_type;
-    } *globals;
-    (void)InputStream_skipToSection(&in, WasmSectionId_global);
+}
+void convert_GlobalSection(struct ConvertContext *ctx, struct InputStream *in, FILE *out) {
+    // struct Global {
+    //     bool mut;
+    //     int8_t val_type;
+    // } *globals;
+    // (void)InputStream_skipToSection(in, WasmSectionId_global);
     {
-        uint32_t len = InputStream_readLeb128_u32(&in);
-        globals = malloc(sizeof(struct Global) * len);
-        if (globals == NULL) panic("out of memory");
+        uint32_t len = InputStream_readLeb128_u32(in);
+        ctx->globals = malloc(sizeof(struct Global) * len);
+        if (ctx->globals == NULL) panic("out of memory");
         for (uint32_t i = 0; i < len; i += 1) {
-            int64_t val_type = InputStream_readLeb128_i64(&in);
-            enum WasmMut mut = InputStream_readByte(&in);
+            int64_t val_type = InputStream_readLeb128_i64(in);
+            enum WasmMut mut = InputStream_readByte(in);
             fprintf(out, "%s%s g%" PRIu32 " = ", WasmMut_toC(mut), WasmValType_toC(val_type), i);
-            renderExpr(out, &in);
+            renderExpr(out, in);
             fputs(";\n", out);
-            globals[i].mut = mut;
-            globals[i].val_type = val_type;
+            ctx->globals[i].mut = mut;
+            ctx->globals[i].val_type = val_type;
         }
         fputc('\n', out);
     }
 
-    (void)InputStream_skipToSection(&in, WasmSectionId_export);
+}
+void convert_ExportSection(struct ConvertContext *ctx, struct InputStream *in, FILE *out) {
+    // (void)InputStream_skipToSection(in, WasmSectionId_export);
     {
-        uint32_t len = InputStream_readLeb128_u32(&in);
+        uint32_t len = InputStream_readLeb128_u32(in);
         for (uint32_t i = 0; i < len; i += 1) {
-            char *name = InputStream_readName(&in);
-            uint8_t kind = InputStream_readByte(&in);
-            uint32_t idx = InputStream_readLeb128_u32(&in);
+            char *name = InputStream_readName(in);
+            uint8_t kind = InputStream_readByte(in);
+            uint32_t idx = InputStream_readLeb128_u32(in);
             switch (kind) {
                 case 0x00: {
-                    if (idx < imports_len) panic("can't export an import");
-                    const struct FuncType *func_type = &types[funcs[idx - imports_len].type_idx];
+                    if (idx < ctx->imports_len) panic("can't export an import");
+                    const struct FuncType *func_type = &ctx->types[ctx->funcs[idx - ctx->imports_len].type_idx];
                     switch (func_type->result->len) {
                         case 0: fputs("void", out); break;
                         case 1: fputs(WasmValType_toC(func_type->result->types[0]), out); break;
@@ -462,7 +591,7 @@ int main(int argc, char **argv) {
                             ") {\n"
                             "    init();\n"
                             "    %sf%" PRIu32 "(",
-                            func_type->result->len > 0 ? "return " : "", idx - imports_len);
+                            func_type->result->len > 0 ? "return " : "", idx - ctx->imports_len);
                     for (uint32_t param_i = 0; param_i < func_type->param->len; param_i += 1) {
                         if (param_i > 0) fputs(", ", out);
                         fprintf(out, "l%" PRIu32, param_i);
@@ -482,44 +611,48 @@ int main(int argc, char **argv) {
         fputc('\n', out);
     }
 
-    (void)InputStream_skipToSection(&in, WasmSectionId_elem);
+}
+void convert_ElemSection(struct ConvertContext *ctx, struct InputStream *in, FILE *out) {
+    // (void)InputStream_skipToSection(in, WasmSectionId_elem);
     {
         uint32_t table_i = 0;
-        uint32_t len = InputStream_readLeb128_u32(&in);
+        uint32_t len = InputStream_readLeb128_u32(in);
         fputs("static void init_elem(void) {\n", out);
         for (uint32_t segment_i = 0; segment_i < len; segment_i += 1) {
             uint32_t table_idx = 0;
-            uint32_t elem_type = InputStream_readLeb128_u32(&in);
+            uint32_t elem_type = InputStream_readLeb128_u32(in);
             if (elem_type != 0x00) panic("unsupported elem type");
-            uint32_t offset = evalExpr(&in);
-            uint32_t segment_len = InputStream_readLeb128_u32(&in);
+            uint32_t offset = evalExpr(in);
+            uint32_t segment_len = InputStream_readLeb128_u32(in);
             for (uint32_t i = 0; i < segment_len; i += 1) {
-                uint32_t func_id = InputStream_readLeb128_u32(&in);
+                uint32_t func_id = InputStream_readLeb128_u32(in);
                 fprintf(out, "    t%" PRIu32 "[UINT32_C(%" PRIu32 ")] = (void (*)(void))&",
                         table_idx, offset + i);
-                if (func_id < imports_len)
-                    fprintf(out, "%s_%s", imports[func_id].mod, imports[func_id].name);
+                if (func_id < ctx->imports_len)
+                    fprintf(out, "%s_%s", ctx->imports[func_id].mod, ctx->imports[func_id].name);
                 else
-                    fprintf(out, "f%" PRIu32, func_id - imports_len);
+                    fprintf(out, "f%" PRIu32, func_id - ctx->imports_len);
                 fputs(";\n", out);
             }
         }
         fputs("}\n\n", out);
     }
 
-    (void)InputStream_skipToSection(&in, WasmSectionId_code);
+}
+void convert_CodeSection(struct ConvertContext *ctx, struct InputStream *in, FILE *out) {
+    // (void)InputStream_skipToSection(in, WasmSectionId_code);
     {
         struct FuncGen fg;
         FuncGen_init(&fg);
-        bool *param_used = malloc(sizeof(bool) * max_param_len);
-        uint32_t *param_stash = malloc(sizeof(uint32_t) * max_param_len);
+        bool *param_used = malloc(sizeof(bool) * ctx->max_param_len);
+        uint32_t *param_stash = malloc(sizeof(uint32_t) * ctx->max_param_len);
 
-        uint32_t len = InputStream_readLeb128_u32(&in);
+        uint32_t len = InputStream_readLeb128_u32(in);
         for (uint32_t func_i = 0; func_i < len; func_i += 1) {
             FuncGen_reset(&fg);
 
-            uint32_t code_len = InputStream_readLeb128_u32(&in);
-            const struct FuncType *func_type = &types[funcs[func_i].type_idx];
+            uint32_t code_len = InputStream_readLeb128_u32(in);
+            const struct FuncType *func_type = &ctx->types[ctx->funcs[func_i].type_idx];
             fputs("static ", out);
             switch (func_type->result->len) {
                 case 0: fputs("void", out); break;
@@ -536,10 +669,10 @@ int main(int argc, char **argv) {
             }
             fputs(") {\n", out);
 
-            for (uint32_t local_sets_remaining = InputStream_readLeb128_u32(&in);
+            for (uint32_t local_sets_remaining = InputStream_readLeb128_u32(in);
                  local_sets_remaining > 0; local_sets_remaining -= 1) {
-                uint32_t local_set_len = InputStream_readLeb128_u32(&in);
-                int64_t val_type = InputStream_readLeb128_i64(&in);
+                uint32_t local_set_len = InputStream_readLeb128_u32(in);
+                int64_t val_type = InputStream_readLeb128_i64(in);
                 for (; local_set_len > 0; local_set_len -= 1) {
                     FuncGen_indent(&fg, out);
                     FuncGen_localDeclare(&fg, out, val_type);
@@ -555,7 +688,7 @@ int main(int argc, char **argv) {
                                            func_type->result->types[result_i]);
                 fputs(";\n", out);
             }
-            FuncGen_blockBegin(&fg, out, WasmOpcode_block, funcs[func_i].type_idx);
+            FuncGen_blockBegin(&fg, out, WasmOpcode_block, ctx->funcs[func_i].type_idx);
             while (!FuncGen_done(&fg)) {
                 //static const char *mnemonics[] = {
                 //    [WasmOpcode_unreachable]         = "unreachable",
@@ -755,7 +888,7 @@ int main(int argc, char **argv) {
                 //
                 //    [WasmOpcode_prefixed]            = "prefixed",
                 //};
-                uint8_t opcode = InputStream_readByte(&in);
+                uint8_t opcode = InputStream_readByte(in);
                 //FuncGen_indent(&fg, out);
                 //fprintf(out, "// %2u: ", fg.stack_i);
                 //if (mnemonics[opcode])
@@ -776,9 +909,9 @@ int main(int argc, char **argv) {
                     case WasmOpcode_block:
                     case WasmOpcode_loop:
                     case WasmOpcode_if: {
-                        int64_t block_type = InputStream_readLeb128_i64(&in);
+                        int64_t block_type = InputStream_readLeb128_i64(in);
                         if (unreachable_depth == 0) {
-                            const struct FuncType *func_type = FuncType_blockType(types, block_type);
+                            const struct FuncType *func_type = FuncType_blockType(ctx->types, block_type);
                             for (uint32_t param_i = func_type->param->len; param_i > 0; ) {
                                 param_i -= 1;
                                 FuncGen_indent(&fg, out);
@@ -805,11 +938,11 @@ int main(int argc, char **argv) {
                     case WasmOpcode_end:
                         if (unreachable_depth <= 1) {
                             const struct ResultType *result_type =
-                                FuncType_blockType(types, FuncGen_blockType(&fg, 0))->result;
+                                FuncType_blockType(ctx->types, FuncGen_blockType(&fg, 0))->result;
                             uint32_t label = FuncGen_blockLabel(&fg, 0);
                             if (unreachable_depth == 0) {
                                 const struct ResultType *result_type =
-                                    FuncType_blockType(types, FuncGen_blockType(&fg, 0))->result;
+                                    FuncType_blockType(ctx->types, FuncGen_blockType(&fg, 0))->result;
                                 for (uint32_t result_i = result_type->len; result_i > 0; ) {
                                     result_i -= 1;
                                     FuncGen_indent(&fg, out);
@@ -837,11 +970,11 @@ int main(int argc, char **argv) {
                         break;
                     case WasmOpcode_br:
                     case WasmOpcode_br_if: {
-                        uint32_t label_idx = InputStream_readLeb128_u32(&in);
+                        uint32_t label_idx = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             enum WasmOpcode kind = FuncGen_blockKind(&fg, label_idx);
                             const struct FuncType *func_type =
-                                FuncType_blockType(types, FuncGen_blockType(&fg, label_idx));
+                                FuncType_blockType(ctx->types, FuncGen_blockType(&fg, label_idx));
                             uint32_t label = FuncGen_blockLabel(&fg, label_idx);
 
                             if (opcode == WasmOpcode_br_if) {
@@ -894,16 +1027,16 @@ int main(int argc, char **argv) {
                             FuncGen_indent(&fg, out);
                             fprintf(out, "switch (l%" PRIu32 ") {\n", FuncGen_stackPop(&fg));
                         }
-                        uint32_t label_len = InputStream_readLeb128_u32(&in);
+                        uint32_t label_len = InputStream_readLeb128_u32(in);
                         for (uint32_t i = 0; i < label_len; i += 1) {
-                            uint32_t label = InputStream_readLeb128_u32(&in);
+                            uint32_t label = InputStream_readLeb128_u32(in);
                             if (unreachable_depth == 0) {
                                 FuncGen_indent(&fg, out);
                                 fprintf(out, "case %u: goto l%" PRIu32 ";\n",
                                         i, FuncGen_blockLabel(&fg, label));
                             }
                         }
-                        uint32_t label = InputStream_readLeb128_u32(&in);
+                        uint32_t label = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             FuncGen_indent(&fg, out);
                             fprintf(out, "default: goto l%" PRIu32 ";\n",
@@ -934,20 +1067,20 @@ int main(int argc, char **argv) {
                         uint32_t table_idx;
                         switch (opcode) {
                             case WasmOpcode_call:
-                                func_id = InputStream_readLeb128_u32(&in);
-                                if (func_id < imports_len)
-                                    type_idx = imports[func_id].type_idx;
+                                func_id = InputStream_readLeb128_u32(in);
+                                if (func_id < ctx->imports_len)
+                                    type_idx = ctx->imports[func_id].type_idx;
                                 else
-                                    type_idx = funcs[func_id - imports_len].type_idx;
+                                    type_idx = ctx->funcs[func_id - ctx->imports_len].type_idx;
                                 break;
                             case WasmOpcode_call_indirect:
-                                type_idx = InputStream_readLeb128_u32(&in);
-                                table_idx = InputStream_readLeb128_u32(&in);
+                                type_idx = InputStream_readLeb128_u32(in);
+                                table_idx = InputStream_readLeb128_u32(in);
                                 func_id = FuncGen_stackPop(&fg);
                                 break;
                         }
                         if (unreachable_depth == 0) {
-                            const struct FuncType *callee_func_type = &types[type_idx];
+                            const struct FuncType *callee_func_type = &ctx->types[type_idx];
                             for (uint32_t param_i = callee_func_type->param->len; param_i > 0; ) {
                                 param_i -= 1;
                                 param_stash[param_i] = FuncGen_stackPop(&fg);
@@ -959,10 +1092,10 @@ int main(int argc, char **argv) {
                             }
                             switch (opcode) {
                                 case WasmOpcode_call:
-                                    if (func_id < imports_len)
-                                        fprintf(out, "%s_%s", imports[func_id].mod, imports[func_id].name);
+                                    if (func_id < ctx->imports_len)
+                                        fprintf(out, "%s_%s", ctx->imports[func_id].mod, ctx->imports[func_id].name);
                                     else
-                                        fprintf(out, "f%" PRIu32, func_id - imports_len);
+                                        fprintf(out, "f%" PRIu32, func_id - ctx->imports_len);
                                     break;
                                 case WasmOpcode_call_indirect:
                                     fputs("(*(", out);
@@ -1009,7 +1142,7 @@ int main(int argc, char **argv) {
                         break;
 
                     case WasmOpcode_local_get: {
-                        uint32_t local_idx = InputStream_readLeb128_u32(&in);
+                        uint32_t local_idx = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             if (local_idx < func_type->param->len) param_used[local_idx] = true;
                             FuncGen_stackPush(&fg, out, FuncGen_localType(&fg, local_idx));
@@ -1018,7 +1151,7 @@ int main(int argc, char **argv) {
                         break;
                     }
                     case WasmOpcode_local_set: {
-                        uint32_t local_idx = InputStream_readLeb128_u32(&in);
+                        uint32_t local_idx = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             if (local_idx < func_type->param->len) param_used[local_idx] = true;
                             FuncGen_indent(&fg, out);
@@ -1028,7 +1161,7 @@ int main(int argc, char **argv) {
                         break;
                     }
                     case WasmOpcode_local_tee: {
-                        uint32_t local_idx = InputStream_readLeb128_u32(&in);
+                        uint32_t local_idx = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             if (local_idx < func_type->param->len) param_used[local_idx] = true;
                             FuncGen_indent(&fg, out);
@@ -1039,15 +1172,15 @@ int main(int argc, char **argv) {
                     }
 
                     case WasmOpcode_global_get: {
-                        uint32_t global_idx = InputStream_readLeb128_u32(&in);
+                        uint32_t global_idx = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
-                            FuncGen_stackPush(&fg, out, globals[global_idx].val_type);
+                            FuncGen_stackPush(&fg, out, ctx->globals[global_idx].val_type);
                             fprintf(out, "g%" PRIu32 ";\n", global_idx);
                         }
                         break;
                     }
                     case WasmOpcode_global_set: {
-                        uint32_t global_idx = InputStream_readLeb128_u32(&in);
+                        uint32_t global_idx = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             FuncGen_indent(&fg, out);
                             fprintf(out, "g%" PRIu32 " = l%" PRIu32 ";\n",
@@ -1058,13 +1191,13 @@ int main(int argc, char **argv) {
 
                     case WasmOpcode_table_get:
                     case WasmOpcode_table_set:
-                        (void)InputStream_readLeb128_u32(&in);
+                        (void)InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) panic("unimplemented opcode");
                         break;
 
                     case WasmOpcode_i32_load: {
-                        uint32_t align = InputStream_readLeb128_u32(&in);
-                        uint32_t offset = InputStream_readLeb128_u32(&in);
+                        uint32_t align = InputStream_readLeb128_u32(in);
+                        uint32_t offset = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             uint32_t base = FuncGen_stackPop(&fg);
                             FuncGen_stackPush(&fg, out, WasmValType_i32);
@@ -1075,8 +1208,8 @@ int main(int argc, char **argv) {
                         break;
                     }
                     case WasmOpcode_i64_load: {
-                        uint32_t align = InputStream_readLeb128_u32(&in);
-                        uint32_t offset = InputStream_readLeb128_u32(&in);
+                        uint32_t align = InputStream_readLeb128_u32(in);
+                        uint32_t offset = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             uint32_t base = FuncGen_stackPop(&fg);
                             FuncGen_stackPush(&fg, out, WasmValType_i64);
@@ -1087,8 +1220,8 @@ int main(int argc, char **argv) {
                         break;
                     }
                     case WasmOpcode_f32_load: {
-                        uint32_t align = InputStream_readLeb128_u32(&in);
-                        uint32_t offset = InputStream_readLeb128_u32(&in);
+                        uint32_t align = InputStream_readLeb128_u32(in);
+                        uint32_t offset = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             uint32_t base = FuncGen_stackPop(&fg);
                             FuncGen_stackPush(&fg, out, WasmValType_f32);
@@ -1099,8 +1232,8 @@ int main(int argc, char **argv) {
                         break;
                     }
                     case WasmOpcode_f64_load: {
-                        uint32_t align = InputStream_readLeb128_u32(&in);
-                        uint32_t offset = InputStream_readLeb128_u32(&in);
+                        uint32_t align = InputStream_readLeb128_u32(in);
+                        uint32_t offset = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             uint32_t base = FuncGen_stackPop(&fg);
                             FuncGen_stackPush(&fg, out, WasmValType_f64);
@@ -1111,8 +1244,8 @@ int main(int argc, char **argv) {
                         break;
                     }
                     case WasmOpcode_i32_load8_s: {
-                        (void)InputStream_readLeb128_u32(&in);
-                        uint32_t offset = InputStream_readLeb128_u32(&in);
+                        (void)InputStream_readLeb128_u32(in);
+                        uint32_t offset = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             uint32_t base = FuncGen_stackPop(&fg);
                             FuncGen_stackPush(&fg, out, WasmValType_i32);
@@ -1122,8 +1255,8 @@ int main(int argc, char **argv) {
                         break;
                     }
                     case WasmOpcode_i32_load8_u: {
-                        (void)InputStream_readLeb128_u32(&in);
-                        uint32_t offset = InputStream_readLeb128_u32(&in);
+                        (void)InputStream_readLeb128_u32(in);
+                        uint32_t offset = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             uint32_t base = FuncGen_stackPop(&fg);
                             FuncGen_stackPush(&fg, out, WasmValType_i32);
@@ -1133,8 +1266,8 @@ int main(int argc, char **argv) {
                         break;
                     }
                     case WasmOpcode_i32_load16_s: {
-                        uint32_t align = InputStream_readLeb128_u32(&in);
-                        uint32_t offset = InputStream_readLeb128_u32(&in);
+                        uint32_t align = InputStream_readLeb128_u32(in);
+                        uint32_t offset = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             uint32_t base = FuncGen_stackPop(&fg);
                             FuncGen_stackPush(&fg, out, WasmValType_i32);
@@ -1145,8 +1278,8 @@ int main(int argc, char **argv) {
                         break;
                     }
                     case WasmOpcode_i32_load16_u: {
-                        uint32_t align = InputStream_readLeb128_u32(&in);
-                        uint32_t offset = InputStream_readLeb128_u32(&in);
+                        uint32_t align = InputStream_readLeb128_u32(in);
+                        uint32_t offset = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             uint32_t base = FuncGen_stackPop(&fg);
                             FuncGen_stackPush(&fg, out, WasmValType_i32);
@@ -1157,8 +1290,8 @@ int main(int argc, char **argv) {
                         break;
                     }
                     case WasmOpcode_i64_load8_s: {
-                        (void)InputStream_readLeb128_u32(&in);
-                        uint32_t offset = InputStream_readLeb128_u32(&in);
+                        (void)InputStream_readLeb128_u32(in);
+                        uint32_t offset = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             uint32_t base = FuncGen_stackPop(&fg);
                             FuncGen_stackPush(&fg, out, WasmValType_i64);
@@ -1168,8 +1301,8 @@ int main(int argc, char **argv) {
                         break;
                     }
                     case WasmOpcode_i64_load8_u: {
-                        (void)InputStream_readLeb128_u32(&in);
-                        uint32_t offset = InputStream_readLeb128_u32(&in);
+                        (void)InputStream_readLeb128_u32(in);
+                        uint32_t offset = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             uint32_t base = FuncGen_stackPop(&fg);
                             FuncGen_stackPush(&fg, out, WasmValType_i64);
@@ -1179,8 +1312,8 @@ int main(int argc, char **argv) {
                         break;
                     }
                     case WasmOpcode_i64_load16_s: {
-                        uint32_t align = InputStream_readLeb128_u32(&in);
-                        uint32_t offset = InputStream_readLeb128_u32(&in);
+                        uint32_t align = InputStream_readLeb128_u32(in);
+                        uint32_t offset = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             uint32_t base = FuncGen_stackPop(&fg);
                             FuncGen_stackPush(&fg, out, WasmValType_i64);
@@ -1191,8 +1324,8 @@ int main(int argc, char **argv) {
                         break;
                     }
                     case WasmOpcode_i64_load16_u: {
-                        uint32_t align = InputStream_readLeb128_u32(&in);
-                        uint32_t offset = InputStream_readLeb128_u32(&in);
+                        uint32_t align = InputStream_readLeb128_u32(in);
+                        uint32_t offset = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             uint32_t base = FuncGen_stackPop(&fg);
                             FuncGen_stackPush(&fg, out, WasmValType_i64);
@@ -1203,8 +1336,8 @@ int main(int argc, char **argv) {
                         break;
                     }
                     case WasmOpcode_i64_load32_s: {
-                        uint32_t align = InputStream_readLeb128_u32(&in);
-                        uint32_t offset = InputStream_readLeb128_u32(&in);
+                        uint32_t align = InputStream_readLeb128_u32(in);
+                        uint32_t offset = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             uint32_t base = FuncGen_stackPop(&fg);
                             FuncGen_stackPush(&fg, out, WasmValType_i64);
@@ -1215,8 +1348,8 @@ int main(int argc, char **argv) {
                         break;
                     }
                     case WasmOpcode_i64_load32_u: {
-                        uint32_t align = InputStream_readLeb128_u32(&in);
-                        uint32_t offset = InputStream_readLeb128_u32(&in);
+                        uint32_t align = InputStream_readLeb128_u32(in);
+                        uint32_t offset = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             uint32_t base = FuncGen_stackPop(&fg);
                             FuncGen_stackPush(&fg, out, WasmValType_i64);
@@ -1228,8 +1361,8 @@ int main(int argc, char **argv) {
                     }
 
                     case WasmOpcode_i32_store: {
-                        uint32_t align = InputStream_readLeb128_u32(&in);
-                        uint32_t offset = InputStream_readLeb128_u32(&in);
+                        uint32_t align = InputStream_readLeb128_u32(in);
+                        uint32_t offset = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             uint32_t value = FuncGen_stackPop(&fg);
                             uint32_t base = FuncGen_stackPop(&fg);
@@ -1241,8 +1374,8 @@ int main(int argc, char **argv) {
                         break;
                     }
                     case WasmOpcode_i64_store: {
-                        uint32_t align = InputStream_readLeb128_u32(&in);
-                        uint32_t offset = InputStream_readLeb128_u32(&in);
+                        uint32_t align = InputStream_readLeb128_u32(in);
+                        uint32_t offset = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             uint32_t value = FuncGen_stackPop(&fg);
                             uint32_t base = FuncGen_stackPop(&fg);
@@ -1254,8 +1387,8 @@ int main(int argc, char **argv) {
                         break;
                     }
                     case WasmOpcode_f32_store: {
-                        uint32_t align = InputStream_readLeb128_u32(&in);
-                        uint32_t offset = InputStream_readLeb128_u32(&in);
+                        uint32_t align = InputStream_readLeb128_u32(in);
+                        uint32_t offset = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             uint32_t value = FuncGen_stackPop(&fg);
                             uint32_t base = FuncGen_stackPop(&fg);
@@ -1268,8 +1401,8 @@ int main(int argc, char **argv) {
                         break;
                     }
                     case WasmOpcode_f64_store: {
-                        uint32_t align = InputStream_readLeb128_u32(&in);
-                        uint32_t offset = InputStream_readLeb128_u32(&in);
+                        uint32_t align = InputStream_readLeb128_u32(in);
+                        uint32_t offset = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             uint32_t value = FuncGen_stackPop(&fg);
                             uint32_t base = FuncGen_stackPop(&fg);
@@ -1282,8 +1415,8 @@ int main(int argc, char **argv) {
                         break;
                     }
                     case WasmOpcode_i32_store8: {
-                        (void)InputStream_readLeb128_u32(&in);
-                        uint32_t offset = InputStream_readLeb128_u32(&in);
+                        (void)InputStream_readLeb128_u32(in);
+                        uint32_t offset = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             uint32_t value = FuncGen_stackPop(&fg);
                             uint32_t base = FuncGen_stackPop(&fg);
@@ -1294,8 +1427,8 @@ int main(int argc, char **argv) {
                         break;
                     }
                     case WasmOpcode_i32_store16: {
-                        uint32_t align = InputStream_readLeb128_u32(&in);
-                        uint32_t offset = InputStream_readLeb128_u32(&in);
+                        uint32_t align = InputStream_readLeb128_u32(in);
+                        uint32_t offset = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             uint32_t value = FuncGen_stackPop(&fg);
                             uint32_t base = FuncGen_stackPop(&fg);
@@ -1308,8 +1441,8 @@ int main(int argc, char **argv) {
                         break;
                     }
                     case WasmOpcode_i64_store8: {
-                        (void)InputStream_readLeb128_u32(&in);
-                        uint32_t offset = InputStream_readLeb128_u32(&in);
+                        (void)InputStream_readLeb128_u32(in);
+                        uint32_t offset = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             uint32_t value = FuncGen_stackPop(&fg);
                             uint32_t base = FuncGen_stackPop(&fg);
@@ -1320,8 +1453,8 @@ int main(int argc, char **argv) {
                         break;
                     }
                     case WasmOpcode_i64_store16: {
-                        uint32_t align = InputStream_readLeb128_u32(&in);
-                        uint32_t offset = InputStream_readLeb128_u32(&in);
+                        uint32_t align = InputStream_readLeb128_u32(in);
+                        uint32_t offset = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             uint32_t value = FuncGen_stackPop(&fg);
                             uint32_t base = FuncGen_stackPop(&fg);
@@ -1334,8 +1467,8 @@ int main(int argc, char **argv) {
                         break;
                     }
                     case WasmOpcode_i64_store32: {
-                        uint32_t align = InputStream_readLeb128_u32(&in);
-                        uint32_t offset = InputStream_readLeb128_u32(&in);
+                        uint32_t align = InputStream_readLeb128_u32(in);
+                        uint32_t offset = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             uint32_t value = FuncGen_stackPop(&fg);
                             uint32_t base = FuncGen_stackPop(&fg);
@@ -1349,7 +1482,7 @@ int main(int argc, char **argv) {
                     }
 
                     case WasmOpcode_memory_size: {
-                        uint32_t mem_idx = InputStream_readLeb128_u32(&in);
+                        uint32_t mem_idx = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             FuncGen_stackPush(&fg, out, WasmValType_i32);
                             fprintf(out, "p%" PRIu32 ";\n", mem_idx);
@@ -1357,7 +1490,7 @@ int main(int argc, char **argv) {
                         break;
                     }
                     case WasmOpcode_memory_grow: {
-                        uint32_t mem_idx = InputStream_readLeb128_u32(&in);
+                        uint32_t mem_idx = InputStream_readLeb128_u32(in);
                         if (unreachable_depth == 0) {
                             uint32_t pages = FuncGen_stackPop(&fg);
                             FuncGen_stackPush(&fg, out, WasmValType_i32);
@@ -1368,7 +1501,7 @@ int main(int argc, char **argv) {
                     }
 
                     case WasmOpcode_i32_const: {
-                        uint32_t value = (uint32_t)InputStream_readLeb128_i32(&in);
+                        uint32_t value = (uint32_t)InputStream_readLeb128_i32(in);
                         if (unreachable_depth == 0) {
                             FuncGen_stackPush(&fg, out, WasmValType_i32);
                             fprintf(out, "UINT32_C(0x%" PRIX32 ");\n", value);
@@ -1376,7 +1509,7 @@ int main(int argc, char **argv) {
                         break;
                     }
                     case WasmOpcode_i64_const: {
-                        uint64_t value = (uint64_t)InputStream_readLeb128_i64(&in);
+                        uint64_t value = (uint64_t)InputStream_readLeb128_i64(in);
                         if (unreachable_depth == 0) {
                             FuncGen_stackPush(&fg, out, WasmValType_i64);
                             fprintf(out, "UINT64_C(0x%" PRIX64 ");\n", value);
@@ -1384,7 +1517,7 @@ int main(int argc, char **argv) {
                         break;
                     }
                     case WasmOpcode_f32_const: {
-                        uint32_t value = InputStream_readLittle_u32(&in);
+                        uint32_t value = InputStream_readLittle_u32(in);
                         if (unreachable_depth == 0) {
                             FuncGen_stackPush(&fg, out, WasmValType_f32);
                             fprintf(out, "f32_reinterpret_i32(UINT32_C(0x%" PRIX32 "));\n", value);
@@ -1392,7 +1525,7 @@ int main(int argc, char **argv) {
                         break;
                     }
                     case WasmOpcode_f64_const: {
-                        uint64_t value = InputStream_readLittle_u64(&in);
+                        uint64_t value = InputStream_readLittle_u64(in);
                         if (unreachable_depth == 0) {
                             FuncGen_stackPush(&fg, out, WasmValType_f64);
                             fprintf(out, "f64_reinterpret_i64(UINT64_C(0x%" PRIX64 "));\n", value);
@@ -2057,7 +2190,7 @@ int main(int argc, char **argv) {
                         break;
 
                     case WasmOpcode_prefixed:
-                        switch (InputStream_readLeb128_u32(&in)) {
+                        switch (InputStream_readLeb128_u32(in)) {
                             case WasmPrefixedOpcode_i32_trunc_sat_f32_s:
                             case WasmPrefixedOpcode_i32_trunc_sat_f32_u:
                             case WasmPrefixedOpcode_i32_trunc_sat_f64_s:
@@ -2069,17 +2202,17 @@ int main(int argc, char **argv) {
                                 if (unreachable_depth == 0) panic("unimplemented opcode");
 
                             case WasmPrefixedOpcode_memory_init:
-                                (void)InputStream_readLeb128_u32(&in);
-                                (void)InputStream_readByte(&in);
+                                (void)InputStream_readLeb128_u32(in);
+                                (void)InputStream_readByte(in);
                                 if (unreachable_depth == 0) panic("unimplemented opcode");
 
                             case WasmPrefixedOpcode_data_drop:
-                                (void)InputStream_readLeb128_u32(&in);
+                                (void)InputStream_readLeb128_u32(in);
                                 if (unreachable_depth == 0) panic("unimplemented opcode");
 
                             case WasmPrefixedOpcode_memory_copy: {
-                                uint32_t dst_mem_idx = InputStream_readLeb128_u32(&in);
-                                uint32_t src_mem_idx = InputStream_readLeb128_u32(&in);
+                                uint32_t dst_mem_idx = InputStream_readLeb128_u32(in);
+                                uint32_t src_mem_idx = InputStream_readLeb128_u32(in);
                                 if (unreachable_depth == 0) {
                                     uint32_t n = FuncGen_stackPop(&fg);
                                     uint32_t src = FuncGen_stackPop(&fg);
@@ -2093,7 +2226,7 @@ int main(int argc, char **argv) {
                             }
 
                             case WasmPrefixedOpcode_memory_fill: {
-                                uint32_t mem_idx = InputStream_readLeb128_u32(&in);
+                                uint32_t mem_idx = InputStream_readLeb128_u32(in);
                                 if (unreachable_depth == 0) {
                                     uint32_t n = FuncGen_stackPop(&fg);
                                     uint32_t c = FuncGen_stackPop(&fg);
@@ -2106,29 +2239,29 @@ int main(int argc, char **argv) {
                             }
 
                             case WasmPrefixedOpcode_table_init:
-                                (void)InputStream_readLeb128_u32(&in);
-                                (void)InputStream_readLeb128_u32(&in);
+                                (void)InputStream_readLeb128_u32(in);
+                                (void)InputStream_readLeb128_u32(in);
                                 if (unreachable_depth == 0) panic("unimplemented opcode");
 
                             case WasmPrefixedOpcode_elem_drop:
-                                (void)InputStream_readLeb128_u32(&in);
+                                (void)InputStream_readLeb128_u32(in);
                                 if (unreachable_depth == 0) panic("unimplemented opcode");
 
                             case WasmPrefixedOpcode_table_copy:
-                                (void)InputStream_readLeb128_u32(&in);
-                                (void)InputStream_readLeb128_u32(&in);
+                                (void)InputStream_readLeb128_u32(in);
+                                (void)InputStream_readLeb128_u32(in);
                                 if (unreachable_depth == 0) panic("unimplemented opcode");
 
                             case WasmPrefixedOpcode_table_grow:
-                                (void)InputStream_readLeb128_u32(&in);
+                                (void)InputStream_readLeb128_u32(in);
                                 if (unreachable_depth == 0) panic("unimplemented opcode");
 
                             case WasmPrefixedOpcode_table_size:
-                                (void)InputStream_readLeb128_u32(&in);
+                                (void)InputStream_readLeb128_u32(in);
                                 if (unreachable_depth == 0) panic("unimplemented opcode");
 
                             case WasmPrefixedOpcode_table_fill:
-                                (void)InputStream_readLeb128_u32(&in);
+                                (void)InputStream_readLeb128_u32(in);
                                 if (unreachable_depth == 0) panic("unimplemented opcode");
                         }
                         break;
@@ -2151,36 +2284,38 @@ int main(int argc, char **argv) {
         }
     }
 
-    (void)InputStream_skipToSection(&in, WasmSectionId_data);
+}
+void convert_DataSection(struct ConvertContext *ctx, struct InputStream *in, FILE *out) {
+    // (void)InputStream_skipToSection(in, WasmSectionId_data);
     {
-        uint32_t len = InputStream_readLeb128_u32(&in);
+        uint32_t len = InputStream_readLeb128_u32(in);
         fputs("static void init_data(void) {\n", out);
-        for (uint32_t i = 0; i < mems_len; i += 1)
+        for (uint32_t i = 0; i < ctx->mems_len; i += 1)
             fprintf(out, "    p%" PRIu32 " = UINT32_C(%" PRIu32 ");\n"
                     "    c%" PRIu32 " = p%" PRIu32 ";\n"
                     "    m%" PRIu32 " = calloc(c%" PRIu32 ", UINT32_C(1) << 16);\n",
-                    i, mems[i].limits.min, i, i, i, i);
+                    i, ctx->mems[i].limits.min, i, i, i, i);
         for (uint32_t segment_i = 0; segment_i < len; segment_i += 1) {
             uint32_t mem_idx;
-            switch (InputStream_readLeb128_u32(&in)) {
+            switch (InputStream_readLeb128_u32(in)) {
                 case 0:
                     mem_idx = 0;
                     break;
 
                 case 2:
-                    mem_idx = InputStream_readLeb128_u32(&in);
+                    mem_idx = InputStream_readLeb128_u32(in);
                     break;
 
                 default: panic("unsupported data kind");
             }
-            uint32_t offset = evalExpr(&in);
-            uint32_t segment_len = InputStream_readLeb128_u32(&in);
+            uint32_t offset = evalExpr(in);
+            uint32_t segment_len = InputStream_readLeb128_u32(in);
             fputc('\n', out);
             fprintf(out, "    static const uint8_t s%" PRIu32 "[UINT32_C(%" PRIu32 ")] = {",
                     segment_i, segment_len);
             for (uint32_t i = 0; i < segment_len; i += 1) {
                 if (i % 32 == 0) fputs("\n       ", out);
-                fprintf(out, " 0x%02hhX,", InputStream_readByte(&in));
+                fprintf(out, " 0x%02hhX,", InputStream_readByte(in));
             }
             fprintf(out, "\n"
                     "    };\n"
@@ -2190,6 +2325,4 @@ int main(int argc, char **argv) {
         fputs("}\n", out);
     }
 
-    InputStream_close(&in);
-    fclose(out);
 }

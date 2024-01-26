@@ -32,8 +32,18 @@ static bool InputStream_atEnd(struct InputStream *self) {
 static uint8_t InputStream_readByte(struct InputStream *self) {
     int value;
     value = fgetc(self->stream);
-    if (value == EOF) panic("unexpected end of input stream");
+    if (value == EOF) panic("unexpected end of input stream(readByte)");
     return value;
+}
+static bool InputStream_readByteOrEOF(struct InputStream *self, uint8_t *byte) {
+    int value;
+    value = fgetc(self->stream);
+    if (value == EOF) {
+        if (feof(self->stream) != 0) return false; // EOF
+        panic("unexpected error occur on input stream(readByte)");
+    }
+    *byte = value;
+    return true; // read byte
 }
 
 static uint32_t InputStream_readLittle_u32(struct InputStream *self) {
@@ -136,22 +146,41 @@ static char *InputStream_readName(struct InputStream *self) {
     uint32_t len = InputStream_readLeb128_u32(self);
     char *name = malloc(len + 1);
     if (name == NULL) panic("out of memory");
-    if (fread(name, 1, len, self->stream) != len) panic("unexpected end of input stream");
+    if (fread(name, 1, len, self->stream) != len) panic("unexpected end of input stream(readName)");
     name[len] = 0;
     return name;
 }
 
 static void InputStream_skipBytes(struct InputStream *self, size_t len) {
-    if (fseek(self->stream, len, SEEK_CUR) == -1) panic("unexpected end of input stream");
+    if (fseek(self->stream, len, SEEK_CUR) == -1) panic("unexpected end of input stream(skipByte)");
 }
 
 static uint32_t InputStream_skipToSection(struct InputStream *self, uint8_t expected_id) {
+    printf("Start Skiping To Section:%d\n", expected_id);
     while (true) {
         uint8_t id = InputStream_readByte(self);
         uint32_t size = InputStream_readLeb128_u32(self);
-        if (id == expected_id) return size;
+    	printf("Section:%d; Size:%d;\n", id, size);
+        if (id == expected_id)
+        {
+            puts("Complete Skip To Target Section\n");
+            return size;
+        }
         InputStream_skipBytes(self, size);
     }
+}
+
+struct SectionHeader {
+    uint8_t id;
+    uint32_t size;
+};
+
+static bool InputStream_readSectionHeader(struct InputStream *self, struct SectionHeader *section_header) {
+    if (InputStream_readByteOrEOF(self, &section_header->id)) {
+        section_header->size = InputStream_readLeb128_u32(self);
+        return true;
+    }
+    return false;
 }
 
 struct ResultType {
