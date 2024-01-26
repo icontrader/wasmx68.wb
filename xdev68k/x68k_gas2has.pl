@@ -1395,7 +1395,7 @@ sub apply_converter {
 				#	.globl <ラベル>
 				#	など
 				if (
-					$line =~ /(\s*)($g_regex_label_definition_directive{$asm_mode})(\s+)(.+?)$g_regex_end/i
+					$line =~ /^(\s*)($g_regex_label_definition_directive{$asm_mode})(\s+)(.+?)$g_regex_end/i
 				) {
 					my $spaces1		= $1;
 					my $directive	= $2;
