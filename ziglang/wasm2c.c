@@ -97,7 +97,7 @@ int main(int argc, char **argv) {
           "#include <stdint.h>\n"
           "#include <stdlib.h>\n"
           "#include <string.h>\n"
-          "\n"
+          "extern void *rmemcpy(void *dest, const void *src, size_t n);\n"
           "static uint16_t i16_byteswap(uint16_t src) {\n"
           "    return (uint16_t)(uint8_t)(src >> 0) << 8 |\n"
           "           (uint16_t)(uint8_t)(src >> 8) << 0;\n"
@@ -113,55 +113,55 @@ int main(int argc, char **argv) {
           "\n", out);
     fputs("static uint16_t load16_align0(const uint8_t *ptr) {\n"
           "    uint16_t val;\n"
-          "    memcpy(&val, ptr, sizeof(val));\n", out);
+          "    rmemcpy(&val, ptr, sizeof(val));\n", out);
     if (is_big_endian) fputs("    val = i16_byteswap(val);", out);
     fputs("    return val;\n"
           "}\n"
           "static uint16_t load16_align1(const uint16_t *ptr) {\n"
           "    uint16_t val;\n"
-          "    memcpy(&val, ptr, sizeof(val));\n", out);
+          "    rmemcpy(&val, ptr, sizeof(val));\n", out);
     if (is_big_endian) fputs("    val = i16_byteswap(val);", out);
     fputs("    return val;\n"
           "}\n"
           "static uint32_t load32_align0(const uint8_t *ptr) {\n"
           "    uint32_t val;\n"
-          "    memcpy(&val, ptr, sizeof(val));\n", out);
+          "    rmemcpy(&val, ptr, sizeof(val));\n", out);
     if (is_big_endian) fputs("    val = i32_byteswap(val);", out);
     fputs("    return val;\n"
           "}\n"
           "static uint32_t load32_align1(const uint16_t *ptr) {\n"
           "    uint32_t val;\n"
-          "    memcpy(&val, ptr, sizeof(val));\n", out);
+          "    rmemcpy(&val, ptr, sizeof(val));\n", out);
     if (is_big_endian) fputs("    val = i32_byteswap(val);", out);
     fputs("    return val;\n"
           "}\n"
           "static uint32_t load32_align2(const uint32_t *ptr) {\n"
           "    uint32_t val;\n"
-          "    memcpy(&val, ptr, sizeof(val));\n", out);
+          "    rmemcpy(&val, ptr, sizeof(val));\n", out);
     if (is_big_endian) fputs("    val = i32_byteswap(val);", out);
     fputs("    return val;\n"
           "}\n"
           "static uint64_t load64_align0(const uint8_t *ptr) {\n"
           "    uint64_t val;\n"
-          "    memcpy(&val, ptr, sizeof(val));\n", out);
+          "    rmemcpy(&val, ptr, sizeof(val));\n", out);
     if (is_big_endian) fputs("    val = i64_byteswap(val);", out);
     fputs("    return val;\n"
           "}\n"
           "static uint64_t load64_align1(const uint16_t *ptr) {\n"
           "    uint64_t val;\n"
-          "    memcpy(&val, ptr, sizeof(val));\n", out);
+          "    rmemcpy(&val, ptr, sizeof(val));\n", out);
     if (is_big_endian) fputs("    val = i64_byteswap(val);", out);
     fputs("    return val;\n"
           "}\n"
           "static uint64_t load64_align2(const uint32_t *ptr) {\n"
           "    uint64_t val;\n"
-          "    memcpy(&val, ptr, sizeof(val));\n", out);
+          "    rmemcpy(&val, ptr, sizeof(val));\n", out);
     if (is_big_endian) fputs("    val = i64_byteswap(val);", out);
     fputs("    return val;\n"
           "}\n"
           "static uint64_t load64_align3(const uint64_t *ptr) {\n"
           "    uint64_t val;\n"
-          "    memcpy(&val, ptr, sizeof(val));\n", out);
+          "    rmemcpy(&val, ptr, sizeof(val));\n", out);
     if (is_big_endian) fputs("    val = i64_byteswap(val);", out);
     fputs("    return val;\n"
           "}\n"
@@ -201,39 +201,39 @@ int main(int argc, char **argv) {
           "\n"
           "static void store16_align0(uint8_t *ptr, uint16_t val) {\n", out);
     if (is_big_endian) fputs("    val = i16_byteswap(val);", out);
-    fputs("    memcpy(ptr, &val, sizeof(val));\n"
+    fputs("    rmemcpy(ptr, &val, sizeof(val));\n"
           "}\n"
           "static void store16_align1(uint16_t *ptr, uint16_t val) {\n", out);
     if (is_big_endian) fputs("    val = i16_byteswap(val);", out);
-    fputs("    memcpy(ptr, &val, sizeof(val));\n"
+    fputs("    rmemcpy(ptr, &val, sizeof(val));\n"
           "}\n"
           "static void store32_align0(uint8_t *ptr, uint32_t val) {\n", out);
     if (is_big_endian) fputs("    val = i32_byteswap(val);", out);
-    fputs("    memcpy(ptr, &val, sizeof(val));\n"
+    fputs("    rmemcpy(ptr, &val, sizeof(val));\n"
           "}\n"
           "static void store32_align1(uint16_t *ptr, uint32_t val) {\n", out);
     if (is_big_endian) fputs("    val = i32_byteswap(val);", out);
-    fputs("    memcpy(ptr, &val, sizeof(val));\n"
+    fputs("    rmemcpy(ptr, &val, sizeof(val));\n"
           "}\n"
           "static void store32_align2(uint32_t *ptr, uint32_t val) {\n", out);
     if (is_big_endian) fputs("    val = i32_byteswap(val);", out);
-    fputs("    memcpy(ptr, &val, sizeof(val));\n"
+    fputs("    rmemcpy(ptr, &val, sizeof(val));\n"
           "}\n"
           "static void store64_align0(uint8_t *ptr, uint64_t val) {\n", out);
     if (is_big_endian) fputs("    val = i64_byteswap(val);", out);
-    fputs("    memcpy(ptr, &val, sizeof(val));\n"
+    fputs("    rmemcpy(ptr, &val, sizeof(val));\n"
           "}\n"
           "static void store64_align1(uint16_t *ptr, uint64_t val) {\n", out);
     if (is_big_endian) fputs("    val = i64_byteswap(val);", out);
-    fputs("    memcpy(ptr, &val, sizeof(val));\n"
+    fputs("    rmemcpy(ptr, &val, sizeof(val));\n"
           "}\n"
           "static void store64_align2(uint32_t *ptr, uint64_t val) {\n", out);
     if (is_big_endian) fputs("    val = i64_byteswap(val);", out);
-    fputs("    memcpy(ptr, &val, sizeof(val));\n"
+    fputs("    rmemcpy(ptr, &val, sizeof(val));\n"
           "}\n"
           "static void store64_align3(uint64_t *ptr, uint64_t val) {\n", out);
     if (is_big_endian) fputs("    val = i64_byteswap(val);", out);
-    fputs("    memcpy(ptr, &val, sizeof(val));\n"
+    fputs("    rmemcpy(ptr, &val, sizeof(val));\n"
           "}\n"
           "\n"
           "static uint32_t i32_reinterpret_f32(const float src) {\n"
