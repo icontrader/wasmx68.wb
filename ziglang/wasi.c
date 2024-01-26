@@ -261,25 +261,13 @@ int main(int argc, char **argv) {
     des[1].guest_path = dupe(".", sizeof("."));
     des[1].host_path = dupe(".", sizeof("."));
 
-    des[2].filetype = wasi_filetype_directory;
-    des[2].guest_path = dupe("/cache", sizeof("/cache"));
-    des[2].atim = now;
-    des[2].mtim = now;
-    des[2].ctim = now;
-
-    des[3].filetype = wasi_filetype_directory;
-    des[3].guest_path = dupe("/lib", sizeof("/lib"));
-    des[3].host_path = dupe(argv[1], strlen(argv[1]) + 1);
-
-    fd_len = 6;
+    fd_len = 4;
     fds = calloc(sizeof(struct FileDescriptor), fd_len);
     if (fds == NULL) panic("out of memory");
     fds[0].stream = stdin;
     fds[1].stream = stdout;
     fds[2].stream = stderr;
     fds[3].de = 1;
-    fds[4].de = 2;
-    fds[5].de = 3;
 
     wasm__start();
 }
