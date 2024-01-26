@@ -17,13 +17,17 @@ CPU = 68000
 ATOMIC = perl ${XDEV68K_DIR}/util/atomic.pl
 CXX = ${XDEV68K_DIR}/m68k-toolchain/bin/m68k-elf-g++
 CC = ${XDEV68K_DIR}/m68k-toolchain/bin/m68k-elf-gcc
-GAS2HAS = perl ${XDEV68K_DIR}/util/x68k_gas2has.pl -cpu $(CPU) -inc doscall.inc -inc iocscall.inc
+GAS2HAS = perl ../xdev68k/x68k_gas2has.pl -cpu $(CPU) -inc doscall.inc -inc iocscall.inc
+# CNVTBL = gawk -f util/converttable.awk
 RUN68 = $(ATOMIC) ${XDEV68K_DIR}/run68/run68
 HAS = $(RUN68) ${XDEV68K_DIR}/x68k_bin/HAS060.X
 HLK = $(RUN68) ${XDEV68K_DIR}/x68k_bin/hlk301.x
+RUSTC = rustc -O -C strip=symbols --target wasm32-wasi
+ZIG = zig build-exe -O ReleaseSmall -target wasm32-wasi-musl
+WASM2C = ../BIN/wasm2c
 
 # 最終生成物
-EXECUTABLE = MAIN.X
+EXECUTABLE = RSHELLO.X
 TARGET_FILES = $(EXECUTABLE)
 
 # ヘッダ検索パス
@@ -32,17 +36,23 @@ INCLUDE_FLAGS = -I${XDEV68K_DIR}/include/xc -I${XDEV68K_DIR}/include/xdev68k
 
 # コンパイルフラグ
 COMMON_FLAGS = -m$(CPU) -Os $(INCLUDE_FLAGS)
-CFLAGS = $(COMMON_FLAGS) -Wno-builtin-declaration-mismatch -fcall-used-d2 -fcall-used-a2 -finput-charset=cp932 -fexec-charset=cp932 -fverbose-asm
+CFLAGS = $(COMMON_FLAGS) -D CLOCKS_PER_SEC=10000000 -Wno-builtin-declaration-mismatch -fcall-used-d2 -fcall-used-a2 -finput-charset=cp932 -fexec-charset=cp932 -fverbose-asm
 CXXFLAGS = $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++17
 
+# *.rsソースファイル
+RS_SRCS = hello.rs
+
+# *.zig ソースファイル
+ZIG_SRCS =
+
 # *.c ソースファイル
-C_SRCS = main.c
+C_SRCS = lib/wasi.c lib/math.c lib/rmemcpy.c
 
 # *.cpp ソースファイル
 CPP_SRCS = 
 
 # *.s ソースファイル
-ASM_SRCS = 
+ASM_SRCS =
 
 # リンク対象のライブラリファイル
 LIBS =\
@@ -60,7 +70,9 @@ INTERMEDIATE_DIR = _build/m$(CPU)
 # オブジェクトファイル
 OBJS =	$(addprefix $(INTERMEDIATE_DIR)/,$(patsubst %.c,%.o,$(C_SRCS))) \
 	$(addprefix $(INTERMEDIATE_DIR)/,$(patsubst %.cpp,%.o,$(CPP_SRCS))) \
-	$(addprefix $(INTERMEDIATE_DIR)/,$(patsubst %.s,%.o,$(ASM_SRCS)))
+	$(addprefix $(INTERMEDIATE_DIR)/,$(patsubst %.s,%.o,$(ASM_SRCS))) \
+	$(addprefix $(INTERMEDIATE_DIR)/,$(patsubst %.rs,%.o,$(RS_SRCS))) \
+	$(addprefix $(INTERMEDIATE_DIR)/,$(patsubst %.zig,%.o,$(ZIG_SRCS))) \
 
 # 依存関係ファイル
 DEPS =	$(addprefix $(INTERMEDIATE_DIR)/,$(patsubst %.c,%.d,$(C_SRCS))) \
@@ -94,26 +106,37 @@ $(EXECUTABLE) : $(OBJS) $(LIBS)
 		cp $$FILENAME $(INTERMEDIATE_DIR)/`basename $$FILENAME`; \
 		echo $(INTERMEDIATE_DIR)/`basename $$FILENAME` >> $(HLK_LINK_LIST); \
 	done
-	$(HLK) -i $(HLK_LINK_LIST) -o $(EXECUTABLE)
+	$(HLK) -d _HEAP_SIZE=140000 -p -i $(HLK_LINK_LIST) -o $(EXECUTABLE)
 
 # *.c ソースのコンパイル
 $(INTERMEDIATE_DIR)/%.o : %.c makefile
 	mkdir -p $(dir $(INTERMEDIATE_DIR)/$*.o)
 	$(CC) -S $(CFLAGS) -o $(INTERMEDIATE_DIR)/$*.m68k-gas.s -MT $(INTERMEDIATE_DIR)/$*.o -MD -MP -MF $(INTERMEDIATE_DIR)/$*.d $<
 	$(GAS2HAS) -i $(INTERMEDIATE_DIR)/$*.m68k-gas.s -o $(INTERMEDIATE_DIR)/$*.s
-	rm -f $(INTERMEDIATE_DIR)/$*.m68k-gas.s
+#	$(CNVTBL) < $(INTERMEDIATE_DIR)/$*.before-table.s > $(INTERMEDIATE_DIR)/$*.s
 	$(HAS) -e -u -w0 $(INCLUDE_FLAGS) $(INTERMEDIATE_DIR)/$*.s -o $(INTERMEDIATE_DIR)/$*.o
+#	rm -f $(INTERMEDIATE_DIR)/$*.m68k-gas.s
 
 # *.cpp ソースのコンパイル
 $(INTERMEDIATE_DIR)/%.o : %.cpp makefile
 	mkdir -p $(dir $(INTERMEDIATE_DIR)/$*.o)
 	$(CXX) -S $(CXXFLAGS) -o $(INTERMEDIATE_DIR)/$*.m68k-gas.s -MT $(INTERMEDIATE_DIR)/$*.o -MD -MP -MF $(INTERMEDIATE_DIR)/$*.d $<
 	$(GAS2HAS) -i $(INTERMEDIATE_DIR)/$*.m68k-gas.s -o $(INTERMEDIATE_DIR)/$*.s
-	rm -f $(INTERMEDIATE_DIR)/$*.m68k-gas.s
+#	$(CNVTBL) < $(INTERMEDIATE_DIR)/$*.before-table.s > $(INTERMEDIATE_DIR)/$*.s
 	$(HAS) -e -u -w0 $(INCLUDE_FLAGS) $(INTERMEDIATE_DIR)/$*.s -o $(INTERMEDIATE_DIR)/$*.o
+#	rm -f $(INTERMEDIATE_DIR)/$*.m68k-gas.s
 
 # *.s ソースのアセンブル
 $(INTERMEDIATE_DIR)/%.o : %.s makefile
 	mkdir -p $(dir $(INTERMEDIATE_DIR)/$*.o)
 	$(HAS) -e -u -w0 $(INCLUDE_FLAGS) $*.s -o $(INTERMEDIATE_DIR)/$*.o
 
+# *.rs ソースのコンパイル
+%.c : %.rs makefile
+	$(RUSTC) $<
+	$(WASM2C) $*.wasm $*.c
+
+# *.zig ソースのコンパイル
+%.c : %.zig makefile
+	$(ZIG) $<
+	$(WASM2C) $*.wasm $*.c
