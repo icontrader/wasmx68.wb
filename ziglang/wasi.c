@@ -244,10 +244,6 @@ static void *dupe(const void *data, size_t len) {
 }
 
 int main(int argc, char **argv) {
-    if (argc < 2) {
-        fprintf(stderr, "usage: %s <zig-lib-path> <args...>\n", argv[0]);
-        return 1;
-    }
 
     global_argc = argc;
     global_argv = argv;
