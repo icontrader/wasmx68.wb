@@ -123,6 +123,13 @@ static void renderExpr(FILE *out, struct InputStream *in) {
         }
     }
 }
+static void renderImportFuncName(FILE *out, struct ConvertContext *ctx, uint32_t func_id) {
+    if (0 == strcmp("wasi_snapshot_preview1", ctx->imports[func_id].mod)) {
+        fprintf(out, "%s_%s", ctx->imports[func_id].mod, ctx->imports[func_id].name);
+    } else {
+        fputs(ctx->imports[func_id].name, out);
+    }
+}
 
 const char *mod = "wasm";
 
@@ -444,7 +451,9 @@ void convert_ImportSection(struct ConvertContext *ctx, struct InputStream *in, F
                         case 1: fputs(WasmValType_toC(func_type->result->types[0]), out); break;
                         default: panic("multiple function returns not supported");
                     }
-                    fprintf(out, " %s_%s(", ctx->imports[i].mod, ctx->imports[i].name);
+                    fputs(" ", out);
+                    renderImportFuncName(out, ctx, i);
+                    fputs("(", out);
                     if (func_type->param->len == 0) fputs("void", out);
                     for (uint32_t param_i = 0; param_i < func_type->param->len; param_i += 1) {
                         if (param_i > 0) fputs(", ", out);
@@ -629,7 +638,7 @@ void convert_ElemSection(struct ConvertContext *ctx, struct InputStream *in, FIL
                 fprintf(out, "    t%" PRIu32 "[UINT32_C(%" PRIu32 ")] = (void (*)(void))&",
                         table_idx, offset + i);
                 if (func_id < ctx->imports_len)
-                    fprintf(out, "%s_%s", ctx->imports[func_id].mod, ctx->imports[func_id].name);
+                    renderImportFuncName(out, ctx, func_id);
                 else
                     fprintf(out, "f%" PRIu32, func_id - ctx->imports_len);
                 fputs(";\n", out);
@@ -1093,7 +1102,7 @@ void convert_CodeSection(struct ConvertContext *ctx, struct InputStream *in, FIL
                             switch (opcode) {
                                 case WasmOpcode_call:
                                     if (func_id < ctx->imports_len)
-                                        fprintf(out, "%s_%s", ctx->imports[func_id].mod, ctx->imports[func_id].name);
+                                        renderImportFuncName(out, ctx, func_id);
                                     else
                                         fprintf(out, "f%" PRIu32, func_id - ctx->imports_len);
                                     break;
