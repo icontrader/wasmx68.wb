@@ -39,6 +39,9 @@ COMMON_FLAGS = -m$(CPU) -Os $(INCLUDE_FLAGS)
 CFLAGS = $(COMMON_FLAGS) -D CLOCKS_PER_SEC=10000000 -Wno-builtin-declaration-mismatch -fcall-used-d2 -fcall-used-a2 -finput-charset=cp932 -fexec-charset=cp932 -fverbose-asm
 CXXFLAGS = $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++17
 
+# *.wasm
+WASM_BIN =
+
 # *.rsソースファイル
 RS_SRCS = hello.rs
 
@@ -73,6 +76,7 @@ OBJS =	$(addprefix $(INTERMEDIATE_DIR)/,$(patsubst %.c,%.o,$(C_SRCS))) \
 	$(addprefix $(INTERMEDIATE_DIR)/,$(patsubst %.s,%.o,$(ASM_SRCS))) \
 	$(addprefix $(INTERMEDIATE_DIR)/,$(patsubst %.rs,%.o,$(RS_SRCS))) \
 	$(addprefix $(INTERMEDIATE_DIR)/,$(patsubst %.zig,%.o,$(ZIG_SRCS))) \
+	$(addprefix $(INTERMEDIATE_DIR)/,$(patsubst %.wasm,%.o,$(WASM_BIN))) \
 
 # 依存関係ファイル
 DEPS =	$(addprefix $(INTERMEDIATE_DIR)/,$(patsubst %.c,%.d,$(C_SRCS))) \
@@ -139,4 +143,7 @@ $(INTERMEDIATE_DIR)/%.o : %.s makefile
 # *.zig ソースのコンパイル
 %.c : %.zig makefile
 	$(ZIG) $<
+	$(WASM2C) $*.wasm $*.c
+
+%.c : %.wasm makefile
 	$(WASM2C) $*.wasm $*.c
