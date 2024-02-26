@@ -123,12 +123,146 @@ static void renderExpr(FILE *out, struct InputStream *in) {
         }
     }
 }
+static bool endsWith(const char* str, const char* e) {
+    size_t len = strlen(e);
+    size_t target_len = strlen(str);
+    if (len > target_len) return false;
+
+    return strcmp(str+(target_len-len), e) == 0;
+}
+static bool startsWith(const char* str, const char* s) {
+    if (*s == 0) return true;
+    while(*(str++) == *(s++)) {
+        if (*s == 0) return true;
+        if (*str == 0) return false;
+    }
+    return false;
+}
+static const char* getTargetSpecificUtilFunctionName(struct Import *fn) {
+    if (endsWith(fn->mod, "_bg.js")) {
+        if (startsWith(fn->name, "__wbg_x68k")) {
+            const char* substr = fn->name + 10;
+            if (startsWith(substr, "disableinterrupt_"))
+                return "__x68k_disable_interrupt";
+            if (startsWith(substr, "enableinterrupt_"))
+                return "__x68k_enable_interrupt";
+            if (startsWith(substr, "bpoke_"))
+                return "__x68k_bpoke";
+            if (startsWith(substr, "wpoke_"))
+                return "__x68k_wpoke";
+            if (startsWith(substr, "lpoke_"))
+                return "__x68k_lpoke";
+            if (startsWith(substr, "bpeek_"))
+                return "__x68k_bpeek";
+            if (startsWith(substr, "wpeek_"))
+                return "__x68k_wpeek";
+            if (startsWith(substr, "lpeek_"))
+                return "__x68k_lpeek";
+            if (startsWith(substr, "sv_"))
+                return "__x68k_sv";
+            if (startsWith(substr, "svmut_"))
+                return "__x68k_sv_mut";
+        }
+    }
+    return NULL;
+}
+static bool isTargetSpecificUtilFunction(struct Import *fn) {
+    const char* name = getTargetSpecificUtilFunctionName(fn);
+    return name != NULL;
+}
 static void renderImportFuncName(FILE *out, struct ConvertContext *ctx, uint32_t func_id) {
     if (0 == strcmp("wasi_snapshot_preview1", ctx->imports[func_id].mod)) {
         fprintf(out, "%s_%s", ctx->imports[func_id].mod, ctx->imports[func_id].name);
     } else {
-        fputs(ctx->imports[func_id].name, out);
+        const char* name = getTargetSpecificUtilFunctionName(&ctx->imports[func_id]);
+        if (name == NULL)
+            fputs(ctx->imports[func_id].name, out);
+        else
+            fputs(name, out);
     }
+}
+static void renderTargetSpecificCallbackFunctions(FILE *out, const char* name, uint32_t func_label_num) {
+    if (startsWith(name, "wasm_bindgen__")) {
+        const char* substring = name + 4 + 1 + 7 + 2;
+        if (startsWith(substring, "convert__closures__invoke0_")) {
+            substring += 7 + 2 + 8 + 2 + 7 + 1;
+            if (startsWith(substring, "mut__")) {
+                fputs("static inline void __x68k_sv_mut(uint32_t arg0, uint32_t arg1) {\n", out);
+            } else {
+                fputs("static inline void __x68k_sv(uint32_t arg0, uint32_t arg1) {\n", out);
+            }
+            fprintf(out,
+                  "    __x68k_svmode((void (*)(uint32_t, uint32_t))f%" PRIu32 ", arg0, arg1);\n", func_label_num);
+            fputs("}\n", out);
+        }
+    }
+}
+static void renderTargetSpecificUtilFunctions(FILE *out) {
+    fputs("static inline void __x68k_disable_interrupt(void) {\n"
+          "    asm volatile(\n"
+          "        \"ori.w #$0700, sr\\n\"\n"
+          "    );\n"
+          "}\n"
+          "static inline void __x68k_enable_interrupt(void) {\n"
+          "    asm volatile(\n"
+          "        \"andi.w #$f8ff, sr\\n\"\n"
+          "    );\n"
+          "}\n"
+          "static inline void __x68k_svmode(void (*invoke)(uint32_t, uint32_t), uint32_t arg0, uint32_t arg1) {\n"
+          "    asm volatile(\n"
+          "        \"suba.l a1, a1\\n\"\n"
+          "        \"IOCS $81\\n\"\n"
+          "        \"move.l d0, -(sp)\\n\"\n"
+          "        \"move.l  %2, -(sp)\\n\"\n"
+          "        \"move.l  %1, -(sp)\\n\"\n"
+          "        \"jsr (%0)\\n\"\n"
+          "        \"add.l #8,sp\\n\"\n"
+          "        \"move.l (sp)+, d0\\n\"\n"
+          "        \"bmi skip_%=\\n\"\n"
+          "        \"movea.l d0, a1\\n\"\n"
+          "        \"IOCS $81\\n\"\n"
+          "        \"skip_%=:\\n\"\n"
+          "        :\n"
+          "        : \"a\"(invoke), \"ir\"(arg0), \"ir\"(arg1)\n"
+          "        : \"d0\", \"d1\", \"d2\", \"a0\", \"a1\", \"a2\"\n"
+          "    );\n"
+          "}\n"
+          "static inline void __x68k_bpoke(uint32_t adr, uint8_t value) {\n"
+          "    *(volatile uint8_t*)adr = value;\n"
+          "}\n"
+          "static inline void __x68k_wpoke(uint32_t adr, uint16_t value) {\n"
+          "    *(volatile uint16_t*)adr = value;\n"
+          "}\n"
+          "static inline void __x68k_lpoke(uint32_t adr, uint32_t value) {\n"
+          "    *(volatile uint32_t*)adr = value;\n"
+          "}\n"
+          "static inline uint8_t __x68k_bpeek(uint32_t adr) {\n"
+          "    uint8_t output;\n"
+          "    asm volatile(\n"
+          "        \"move.b (%1), %0\\n\"\n"
+          "        :\"=r\"(output):\"a\"(adr)\n"
+          "        :\n"
+          "    );\n"
+          "    return output;\n"
+          "}\n"
+          "static inline uint16_t __x68k_wpeek(uint32_t adr) {\n"
+          "    uint16_t output;\n"
+          "    asm volatile(\n"
+          "        \"move.w (%1), %0\\n\"\n"
+          "        :\"=r\"(output):\"a\"(adr)\n"
+          "        :\n"
+          "    );\n"
+          "    return output;\n"
+          "}\n"
+          "static inline uint32_t __x68k_lpeek(uint32_t adr) {\n"
+          "    uint32_t output;\n"
+          "    asm volatile(\n"
+          "        \"move.l (%1), %0\\n\"\n"
+          "        :\"=r\"(output):\"a\"(adr)\n"
+          "        :\n"
+          "    );\n"
+          "    return output;\n"
+          "}\n", out);
 }
 
 const char *mod = "wasm";
@@ -140,7 +274,7 @@ int main(int argc, char **argv) {
     }
 
     // const char *mod = "wasm";
-    bool is_big_endian = false; // TODO
+    bool is_big_endian = true; // TODO
 
     struct InputStream in;
     InputStream_open(&in, argv[1]);
@@ -157,71 +291,77 @@ int main(int argc, char **argv) {
           "#include <stdint.h>\n"
           "#include <stdlib.h>\n"
           "#include <string.h>\n"
-          "extern void *rmemcpy(void *dest, const void *src, size_t n);\n"
-          "static uint16_t i16_byteswap(uint16_t src) {\n"
+          "\n"
+          "static inline uint16_t i16_byteswap(uint16_t src) {\n"
           "    return (uint16_t)(uint8_t)(src >> 0) << 8 |\n"
           "           (uint16_t)(uint8_t)(src >> 8) << 0;\n"
           "}\n"
-          "static uint32_t i32_byteswap(uint32_t src) {\n"
+          "static inline uint32_t i32_byteswap(uint32_t src) {\n"
           "    return (uint32_t)i16_byteswap(src >>  0) << 16 |\n"
           "           (uint32_t)i16_byteswap(src >> 16) <<  0;\n"
           "}\n"
-          "static uint64_t i64_byteswap(uint64_t src) {\n"
+          "static inline uint64_t i64_byteswap(uint64_t src) {\n"
           "    return (uint64_t)i32_byteswap(src >>  0) << 32 |\n"
           "           (uint64_t)i32_byteswap(src >> 32) <<  0;\n"
           "}\n"
           "\n", out);
-    fputs("static uint16_t load16_align0(const uint8_t *ptr) {\n"
+    fputs("static inline uint16_t load16_align0(const uint8_t *ptr) {\n"
           "    uint16_t val;\n"
-          "    rmemcpy(&val, ptr, sizeof(val));\n", out);
+          "    memcpy(&val, ptr, sizeof(val));\n", out);
     if (is_big_endian) fputs("    val = i16_byteswap(val);", out);
     fputs("    return val;\n"
           "}\n"
-          "static uint16_t load16_align1(const uint16_t *ptr) {\n"
-          "    uint16_t val;\n"
-          "    rmemcpy(&val, ptr, sizeof(val));\n", out);
-    if (is_big_endian) fputs("    val = i16_byteswap(val);", out);
-    fputs("    return val;\n"
-          "}\n"
-          "static uint32_t load32_align0(const uint8_t *ptr) {\n"
+          "static inline uint16_t load16_align1(const uint16_t *ptr) {\n", out);
+    if (is_big_endian)
+        fputs("    return __builtin_bswap16(*ptr);", out);
+    else
+        fputs("    uint16_t val;\n"
+              "    memcpy(&val, ptr, sizeof(val));\n"
+              "    return val;\n", out);
+    fputs("}\n"
+          "static inline uint32_t load32_align0(const uint8_t *ptr) {\n"
           "    uint32_t val;\n"
-          "    rmemcpy(&val, ptr, sizeof(val));\n", out);
+          "    memcpy(&val, ptr, sizeof(val));\n", out);
     if (is_big_endian) fputs("    val = i32_byteswap(val);", out);
     fputs("    return val;\n"
           "}\n"
-          "static uint32_t load32_align1(const uint16_t *ptr) {\n"
-          "    uint32_t val;\n"
-          "    rmemcpy(&val, ptr, sizeof(val));\n", out);
-    if (is_big_endian) fputs("    val = i32_byteswap(val);", out);
-    fputs("    return val;\n"
-          "}\n"
-          "static uint32_t load32_align2(const uint32_t *ptr) {\n"
-          "    uint32_t val;\n"
-          "    rmemcpy(&val, ptr, sizeof(val));\n", out);
-    if (is_big_endian) fputs("    val = i32_byteswap(val);", out);
-    fputs("    return val;\n"
-          "}\n"
-          "static uint64_t load64_align0(const uint8_t *ptr) {\n"
+          "static inline uint32_t load32_align1(const uint16_t *ptr) {\n", out);
+    if (is_big_endian)
+        fputs("    return __builtin_bswap32(*ptr);", out);
+    else
+        fputs("    uint32_t val;\n"
+              "    memcpy(&val, ptr, sizeof(val));\n"
+              "    return val;\n", out);
+    fputs("}\n"
+          "static inline uint32_t load32_align2(const uint32_t *ptr) {\n", out);
+    if (is_big_endian)
+        fputs("    return __builtin_bswap32(*ptr);", out);
+    else
+        fputs("    uint32_t val;\n"
+              "    memcpy(&val, ptr, sizeof(val));\n"
+              "    return val;\n", out);
+    fputs("}\n"
+          "static inline uint64_t load64_align0(const uint8_t *ptr) {\n"
           "    uint64_t val;\n"
-          "    rmemcpy(&val, ptr, sizeof(val));\n", out);
+          "    memcpy(&val, ptr, sizeof(val));\n", out);
     if (is_big_endian) fputs("    val = i64_byteswap(val);", out);
     fputs("    return val;\n"
           "}\n"
-          "static uint64_t load64_align1(const uint16_t *ptr) {\n"
+          "static inline uint64_t load64_align1(const uint16_t *ptr) {\n"
           "    uint64_t val;\n"
-          "    rmemcpy(&val, ptr, sizeof(val));\n", out);
+          "    memcpy(&val, ptr, sizeof(val));\n", out);
     if (is_big_endian) fputs("    val = i64_byteswap(val);", out);
     fputs("    return val;\n"
           "}\n"
-          "static uint64_t load64_align2(const uint32_t *ptr) {\n"
+          "static inline uint64_t load64_align2(const uint32_t *ptr) {\n"
           "    uint64_t val;\n"
-          "    rmemcpy(&val, ptr, sizeof(val));\n", out);
+          "    memcpy(&val, ptr, sizeof(val));\n", out);
     if (is_big_endian) fputs("    val = i64_byteswap(val);", out);
     fputs("    return val;\n"
           "}\n"
-          "static uint64_t load64_align3(const uint64_t *ptr) {\n"
+          "static inline uint64_t load64_align3(const uint64_t *ptr) {\n"
           "    uint64_t val;\n"
-          "    rmemcpy(&val, ptr, sizeof(val));\n", out);
+          "    memcpy(&val, ptr, sizeof(val));\n", out);
     if (is_big_endian) fputs("    val = i64_byteswap(val);", out);
     fputs("    return val;\n"
           "}\n"
@@ -259,41 +399,47 @@ int main(int argc, char **argv) {
           "    return i64_ctz(lhs);\n"
           "}\n"
           "\n"
-          "static void store16_align0(uint8_t *ptr, uint16_t val) {\n", out);
+          "static inline void store16_align0(uint8_t *ptr, uint16_t val) {\n", out);
     if (is_big_endian) fputs("    val = i16_byteswap(val);", out);
-    fputs("    rmemcpy(ptr, &val, sizeof(val));\n"
+    fputs("    memcpy(ptr, &val, sizeof(val));\n"
           "}\n"
-          "static void store16_align1(uint16_t *ptr, uint16_t val) {\n", out);
-    if (is_big_endian) fputs("    val = i16_byteswap(val);", out);
-    fputs("    rmemcpy(ptr, &val, sizeof(val));\n"
-          "}\n"
-          "static void store32_align0(uint8_t *ptr, uint32_t val) {\n", out);
+          "static inline void store16_align1(uint16_t *ptr, uint16_t val) {\n", out);
+    if (is_big_endian)
+        fputs("    *ptr = __builtin_bswap16(val);", out);
+    else
+        fputs("    memcpy(ptr, &val, sizeof(val));\n", out);
+    fputs("}\n"
+          "static inline void store32_align0(uint8_t *ptr, uint32_t val) {\n", out);
     if (is_big_endian) fputs("    val = i32_byteswap(val);", out);
-    fputs("    rmemcpy(ptr, &val, sizeof(val));\n"
+    fputs("    memcpy(ptr, &val, sizeof(val));\n"
           "}\n"
-          "static void store32_align1(uint16_t *ptr, uint32_t val) {\n", out);
-    if (is_big_endian) fputs("    val = i32_byteswap(val);", out);
-    fputs("    rmemcpy(ptr, &val, sizeof(val));\n"
-          "}\n"
-          "static void store32_align2(uint32_t *ptr, uint32_t val) {\n", out);
-    if (is_big_endian) fputs("    val = i32_byteswap(val);", out);
-    fputs("    rmemcpy(ptr, &val, sizeof(val));\n"
-          "}\n"
-          "static void store64_align0(uint8_t *ptr, uint64_t val) {\n", out);
+          "static inline void store32_align1(uint16_t *ptr, uint32_t val) {\n", out);
+    if (is_big_endian)
+        fputs("    *(uint32_t *)ptr = __builtin_bswap32(val);", out);
+    else
+        fputs("    memcpy(ptr, &val, sizeof(val));\n", out);
+    fputs("}\n"
+          "static inline void store32_align2(uint32_t *ptr, uint32_t val) {\n", out);
+    if (is_big_endian)
+        fputs("    *(uint32_t *)ptr = __builtin_bswap32(val);", out);
+    else
+        fputs("    memcpy(ptr, &val, sizeof(val));\n", out);
+    fputs("}\n"
+          "static inline void store64_align0(uint8_t *ptr, uint64_t val) {\n", out);
     if (is_big_endian) fputs("    val = i64_byteswap(val);", out);
-    fputs("    rmemcpy(ptr, &val, sizeof(val));\n"
+    fputs("    memcpy(ptr, &val, sizeof(val));\n"
           "}\n"
-          "static void store64_align1(uint16_t *ptr, uint64_t val) {\n", out);
+          "static inline void store64_align1(uint16_t *ptr, uint64_t val) {\n", out);
     if (is_big_endian) fputs("    val = i64_byteswap(val);", out);
-    fputs("    rmemcpy(ptr, &val, sizeof(val));\n"
+    fputs("    memcpy(ptr, &val, sizeof(val));\n"
           "}\n"
-          "static void store64_align2(uint32_t *ptr, uint64_t val) {\n", out);
+          "static inline void store64_align2(uint32_t *ptr, uint64_t val) {\n", out);
     if (is_big_endian) fputs("    val = i64_byteswap(val);", out);
-    fputs("    rmemcpy(ptr, &val, sizeof(val));\n"
+    fputs("    memcpy(ptr, &val, sizeof(val));\n"
           "}\n"
-          "static void store64_align3(uint64_t *ptr, uint64_t val) {\n", out);
+          "static inline void store64_align3(uint64_t *ptr, uint64_t val) {\n", out);
     if (is_big_endian) fputs("    val = i64_byteswap(val);", out);
-    fputs("    rmemcpy(ptr, &val, sizeof(val));\n"
+    fputs("    memcpy(ptr, &val, sizeof(val));\n"
           "}\n"
           "\n"
           "static uint32_t i32_reinterpret_f32(const float src) {\n"
@@ -346,6 +492,8 @@ int main(int argc, char **argv) {
           "    inited = 1;\n"
           "}\n"
           "\n", out);
+
+    renderTargetSpecificUtilFunctions(out);
 
     bool emitElem = false;
     struct ConvertContext ctx;
@@ -445,6 +593,10 @@ void convert_ImportSection(struct ConvertContext *ctx, struct InputStream *in, F
             switch (InputStream_readByte(in)) {
                 case 0x00: { // func
                     ctx->imports[i].type_idx = InputStream_readLeb128_u32(in);
+
+                    if (isTargetSpecificUtilFunction(&ctx->imports[i]))
+                        break;
+
                     const struct FuncType *func_type = &ctx->types[ctx->imports[i].type_idx];
                     switch (func_type->result->len) {
                         case 0: fputs("void", out); break;
@@ -606,6 +758,7 @@ void convert_ExportSection(struct ConvertContext *ctx, struct InputStream *in, F
                         fprintf(out, "l%" PRIu32, param_i);
                     }
                     fputs(");\n}\n", out);
+                    renderTargetSpecificCallbackFunctions(out, name, idx - ctx->imports_len);
                     break;
                 }
 
