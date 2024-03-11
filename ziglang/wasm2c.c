@@ -52,6 +52,7 @@ struct ConvertContext
 
 
 
+void render_Memallocation(struct ConvertContext *ctx, FILE *out);
 void convert_TypeSection(struct ConvertContext *ctx, struct InputStream *in, FILE *out);
 void convert_ImportSection(struct ConvertContext *ctx, struct InputStream *in, FILE *out);
 void convert_FuncSection(struct ConvertContext *ctx, struct InputStream *in, FILE *out);
@@ -496,6 +497,7 @@ int main(int argc, char **argv) {
     renderTargetSpecificUtilFunctions(out);
 
     bool emitElem = false;
+    bool emitData = false;
     struct ConvertContext ctx;
     struct SectionHeader section_header;
     while (InputStream_readSectionHeader(&in, &section_header))
@@ -540,6 +542,7 @@ int main(int argc, char **argv) {
             break;
         
         case WasmSectionId_data:
+            emitData = true;
             convert_DataSection(&ctx, &in, out);
             break;
         
@@ -552,6 +555,17 @@ int main(int argc, char **argv) {
     if (!emitElem) {
         fputs(
             "static void init_elem() {}\n",
+            out
+        );
+    }
+    if (!emitData) {
+        fputs(
+            "static void init_data() {\n",
+            out
+        );
+        render_Memallocation(&ctx, out);
+        fputs(
+            "}\n",
             out
         );
     }
@@ -2447,16 +2461,19 @@ void convert_CodeSection(struct ConvertContext *ctx, struct InputStream *in, FIL
     }
 
 }
-void convert_DataSection(struct ConvertContext *ctx, struct InputStream *in, FILE *out) {
-    // (void)InputStream_skipToSection(in, WasmSectionId_data);
-    {
-        uint32_t len = InputStream_readLeb128_u32(in);
-        fputs("static void init_data(void) {\n", out);
+void render_Memallocation(struct ConvertContext *ctx, FILE *out) {
         for (uint32_t i = 0; i < ctx->mems_len; i += 1)
             fprintf(out, "    p%" PRIu32 " = UINT32_C(%" PRIu32 ");\n"
                     "    c%" PRIu32 " = p%" PRIu32 ";\n"
                     "    m%" PRIu32 " = calloc(c%" PRIu32 ", UINT32_C(1) << 16);\n",
                     i, ctx->mems[i].limits.min, i, i, i, i);
+}
+void convert_DataSection(struct ConvertContext *ctx, struct InputStream *in, FILE *out) {
+    // (void)InputStream_skipToSection(in, WasmSectionId_data);
+    {
+        uint32_t len = InputStream_readLeb128_u32(in);
+        fputs("static void init_data(void) {\n", out);
+        render_Memallocation(ctx, out);
         for (uint32_t segment_i = 0; segment_i < len; segment_i += 1) {
             uint32_t mem_idx;
             switch (InputStream_readLeb128_u32(in)) {
