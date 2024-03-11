@@ -165,6 +165,9 @@ static const char* getTargetSpecificUtilFunctionName(struct Import *fn) {
                 return "__x68k_sv_mut";
         }
     }
+    if (strcmp(fn->mod, "x68kutil") == 0) {
+        return fn->name; // same name
+    }
     return NULL;
 }
 static bool isTargetSpecificUtilFunction(struct Import *fn) {
@@ -263,6 +266,38 @@ static void renderTargetSpecificUtilFunctions(FILE *out) {
           "        :\n"
           "    );\n"
           "    return output;\n"
+          "}\n", out);
+}
+static void renderTargetSpecificUtilFunctionsDependingOnLinearMemory(FILE *out) {
+    fputs("static inline uint32_t convert_native_ptr(uint32_t adr) {\n"
+          "    return (uint32_t)&m0[adr];\n"
+          "}\n"
+          "static inline uint32_t convert_native_ptr_mut(uint32_t adr) {\n"
+          "    return (uint32_t)&m0[adr];\n"
+          "}\n"
+          "static inline int16_t get_native_i16(uint32_t adr) {\n"
+          "    return *(int16_t *)&m0[adr];\n"
+          "}\n"
+          "static inline void set_native_i16(uint32_t adr, int16_t value) {\n"
+          "    *(int16_t *)&m0[adr] = value;\n"
+          "}\n"
+          "static inline uint16_t get_native_u16(uint32_t adr) {\n"
+          "    return *(uint16_t *)&m0[adr];\n"
+          "}\n"
+          "static inline void set_native_u16(uint32_t adr, uint16_t value) {\n"
+          "    *(uint16_t *)&m0[adr] = value;\n"
+          "}\n"
+          "static inline int32_t get_native_i32(uint32_t adr) {\n"
+          "    return *(int32_t *)&m0[adr];\n"
+          "}\n"
+          "static inline void set_native_i32(uint32_t adr, int32_t value) {\n"
+          "    *(int32_t *)&m0[adr] = value;\n"
+          "}\n"
+          "static inline uint32_t get_native_u32(uint32_t adr) {\n"
+          "    return *(uint32_t *)&m0[adr];\n"
+          "}\n"
+          "static inline void set_native_u32(uint32_t adr, uint32_t value) {\n"
+          "    *(uint32_t *)&m0[adr] = value;\n"
           "}\n", out);
 }
 
@@ -522,6 +557,7 @@ int main(int argc, char **argv) {
         
         case WasmSectionId_mem:
             convert_MemSection(&ctx, &in, out);
+            renderTargetSpecificUtilFunctionsDependingOnLinearMemory(out);
             break;
         
         case WasmSectionId_global:
@@ -2462,11 +2498,11 @@ void convert_CodeSection(struct ConvertContext *ctx, struct InputStream *in, FIL
 
 }
 void render_Memallocation(struct ConvertContext *ctx, FILE *out) {
-        for (uint32_t i = 0; i < ctx->mems_len; i += 1)
-            fprintf(out, "    p%" PRIu32 " = UINT32_C(%" PRIu32 ");\n"
-                    "    c%" PRIu32 " = p%" PRIu32 ";\n"
-                    "    m%" PRIu32 " = calloc(c%" PRIu32 ", UINT32_C(1) << 16);\n",
-                    i, ctx->mems[i].limits.min, i, i, i, i);
+    for (uint32_t i = 0; i < ctx->mems_len; i += 1)
+        fprintf(out, "    p%" PRIu32 " = UINT32_C(%" PRIu32 ");\n"
+                "    c%" PRIu32 " = p%" PRIu32 ";\n"
+                "    m%" PRIu32 " = calloc(c%" PRIu32 ", UINT32_C(1) << 16);\n",
+                i, ctx->mems[i].limits.min, i, i, i, i);
 }
 void convert_DataSection(struct ConvertContext *ctx, struct InputStream *in, FILE *out) {
     // (void)InputStream_skipToSection(in, WasmSectionId_data);
