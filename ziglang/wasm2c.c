@@ -506,7 +506,11 @@ int main(int argc, char **argv) {
           "    if (new_p > UINT32_C(0x10000)) return UINT32_C(0xFFFFFFFF);\n"
           "    uint32_t new_c = *c;\n"
           "    if (new_c < new_p) {\n"
+#ifdef D_OVER_ALLOC
           "        do new_c += new_c / 2 + 8; while (new_c < new_p);\n"
+#else
+          "        new_c = new_p;\n"
+#endif
           "        if (new_c > UINT32_C(0x10000)) new_c = UINT32_C(0x10000);\n"
           "        new_m = realloc(new_m, new_c << 16);\n"
           "        if (new_m == NULL) return UINT32_C(0xFFFFFFFF);\n"
